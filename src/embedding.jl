@@ -29,7 +29,7 @@ draw(PNG("output.png",20cm,20cm),
 Data must have the same number of dimensions as the training dataset
 and will be normalised with the same parameters.
 """
-function embedGigaSOM(som::GigaSOM.Som, data::DataFrame, k::Integer=0, adjust::Float64=1.0f0, smooth::Float64=0.0f0)
+function embedGigaSOM(som::GigaSOM.Som, data::DataFrame, k=0, adjust=1.0, smooth=0.0)
 
     data::Array{Float64,2} = convertTrainingData(data)
     if size(data,2) != size(som.codes,2)
@@ -37,14 +37,15 @@ function embedGigaSOM(som::GigaSOM.Som, data::DataFrame, k::Integer=0, adjust::F
         error(SOM_ERRORS[:ERR_COL_NUM])
     end
 
-    boost = ((1+sqrt(Float64(5)))/2)^(smooth-2)
+    boost = ((1+sqrt(Float64(5)))/2)^(Float64(smooth)-2)
+    adjust = Float64(adjust)
 
     if k == 0
         k = Integer((som.xdim+som.ydim)/2)
     end
 
     if k > som.xdim*som.ydim
-        k = som.xdim * som.ydim
+        k = Integer(som.xdim * som.ydim)
     end
 
     #TODO: test other trees (KD or VP trees could work with dimensions <30)
