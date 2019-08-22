@@ -31,7 +31,7 @@ and will be normalised with the same parameters.
 """
 function embedGigaSOM(som::GigaSOM.Som, data::DataFrame, k::Integer=0, adjust::Float64=1.0f0, smooth::Float64=0.0f0)
 
-    data::Array{Float64,2} = GigaSOM.convertTrainingData(data)
+    data::Array{Float64,2} = convertTrainingData(data)
     if size(data,2) != size(som.codes,2)
         println("    data: $(size(data,2)), codes: $(size(som.codes,2))")
         error(SOM_ERRORS[:ERR_COL_NUM])
