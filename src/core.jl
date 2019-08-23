@@ -61,50 +61,56 @@ end
 - `kernel::function`: optional distance kernel; one of (`bubbleKernel, gaussianKernel`)
             default is `gaussianKernel`
 - `r`: optional training radius.
-       If r is not specified, it defaults to √(xdim^2 + ydim^2) / 2
+       If r is not specified, it defaults to (xdim+ydim)/3
+- `rFinal`: target radius at the last epoch, defaults to 0.1
 Training data must be convertable to Array{Float34,2} with `convert()`.
 Training samples are row-wise; one sample per row. An alternative kernel function
 can be provided to modify the distance-dependent training. The function must fit
 to the signature fun(x, r) where x is an arbitrary distance and r is a parameter
 controlling the function and the return value is between 0.0 and 1.0.
 """
-function trainGigaSOM(som::Som, train::DataFrame; kernelFun::Function = gaussianKernel,
-                    r = 0.0, epochs = 10)
+function trainGigaSOM(som::Som, train::DataFrame;
+                      kernelFun::Function = gaussianKernel,
+                      r = 0.0, rFinal=0.1,
+                      epochs = 10)
 
     train = convertTrainingData(train)
 
     # set default radius:
     if r == 0.0
-        r = √(som.xdim^2 + som.ydim^2) / 2
+        r = (som.xdim+som.ydim)/3
         @info "The radius has been determined automatically."
     end
 
     dm = distMatrix(som.grid, som.toroidal)
 
     codes = som.codes
-    globalSumNumerator = zeros(Float64, size(codes))
-    globalSumDenominator = zeros(Float64, size(codes)[1])
 
     # linear decay
-    if r < 1.5
-        Δr = 0.0
-    else
-        Δr = (r-1.0) / epochs
-    end
+    Δr = (r-rFinal) / (epochs-1)
 
     nWorkers = nprocs()
     dTrain = distribute(train)
 
     for j in 1:epochs
 
-     println("Epoch: $j")
+     rEpoch = r - Δr*(j-1)
+
+     println("Epoch: $j (radius: $rEpoch)")
+
+     #TODO explain: this was moved into the cycle because the update matrices should really get reset everytime. It looks like they were just growing additively before; is that right?
+     globalSumNumerator = zeros(Float64, size(codes))
+     globalSumDenominator = zeros(Float64, size(codes)[1])
+
+     # prepare the search structure for this epoch's input (TODO: use a real tree?)
+     nnTree = BruteTree(Array{Float64,2}(transpose(codes)))
 
      if nWorkers > 1
          # distribution across workers
          R = Array{Future}(undef,nWorkers, 1)
           @sync for p in workers()
               @async R[p] = @spawnat p begin
-                 doEpoch(localpart(dTrain), codes, dm, kernelFun, r, false)
+                 doEpoch(localpart(dTrain), codes, nnTree) #dm, kernelFun, r, false)
               end
           end
 
@@ -115,20 +121,14 @@ function trainGigaSOM(som::Som, train::DataFrame; kernelFun::Function = gaussian
           end
      else
          # only batch mode
-         sumNumerator, sumDenominator = doEpoch(localpart(dTrain), codes, dm,
-                                                    kernelFun, r, false)
+         sumNumerator, sumDenominator = doEpoch(localpart(dTrain), codes, nnTree)
 
-        globalSumNumerator += sumNumerator
-        globalSumDenominator += sumDenominator
+         globalSumNumerator += sumNumerator
+         globalSumDenominator += sumDenominator
      end
-
-     r -= Δr
-     if r < 0.0
-         r = 0.0
-     end
-
-     println("Radius: $r")
-     codes = globalSumNumerator ./ globalSumDenominator
+    
+     wEpoch = kernelFun(dm, rEpoch)
+     codes = (wEpoch*globalSumNumerator) ./ (wEpoch*globalSumDenominator)
     end
 
     som.codes[:,:] = codes[:,:]
@@ -138,46 +138,41 @@ end
 
 
 """
-    doEpoch(x::Array{Float64}, codes::Array{Float64}, dm::Array{Float64},
-            kernelFun::Function, r::Number, toroidal::Bool)
+    doEpoch(x::Array{Float64}, codes::Array{Float64}, nnTree)
 
 vectors and the adjustment in radius after each epoch.
 
 # Arguments:
 - `x`: training Data
 - `codes`: Codebook
-- `dm`: distance matrix of all neurons of the SOM
-- `kernelFun`: distance kernel function of type fun(x, r)
-- `r`: training radius
-- `toroidal`: if true, the SOM is toroidal.
+- `nnTree`: knn-compatible tree built upon the codes
 """
-function doEpoch(x::Array{Float64, 2}, codes::Array{Float64, 2}, dm::Array{Float64, 2},
-                kernelFun::Function, r::Number, toroidal::Bool)
-
-     nRows::Int64 = size(x, 1)
-     nCodes::Int64 = size(codes, 1)
+function doEpoch(x::Array{Float64, 2}, codes::Array{Float64, 2}, nnTree)
 
      # initialise numerator and denominator with 0's
      sumNumerator = zeros(Float64, size(codes))
      sumDenominator = zeros(Float64, size(codes)[1])
 
      # for each sample in dataset / trainingsset
-     for s in 1:nRows
+     for s in 1:size(x, 1)
 
-         sample = vec(x[s, : ])
-         bmuIdx = findBmu(codes, sample)
+         (bmuIdx, bmuDist) = knn(nnTree, x[s, :], 1)
+
+         target = bmuIdx[1]
+
+         sumNumerator[target, :] .+= x[s, :]
+         sumDenominator[target] += 1
 
          # for each node in codebook get distances to bmu and multiply it
-         dist = kernelFun(dm[bmuIdx, :], r)
+         #dist = kernelFun(dm[bmuIdx, :], r)
 
          # doing col wise update of the numerator
-         for i in 1:size(sumNumerator, 2)
-             @inbounds @views begin
-                 sumNumerator[:,i] .+= dist .* sample[i]
-             end
-
-         end
-         sumDenominator += dist
+         #for i in 1:size(sumNumerator, 2)
+             #@inbounds @views begin
+                 #sumNumerator[:,i] .+= dist .* sample[i]
+             #end
+         #
+         #end
      end
 
      return sumNumerator, sumDenominator

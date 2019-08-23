@@ -29,7 +29,8 @@ draw(PNG("output.png",20cm,20cm),
 Data must have the same number of dimensions as the training dataset
 and will be normalised with the same parameters.
 """
-function embedGigaSOM(som::GigaSOM.Som, data::DataFrame, k=0, adjust=1.0, smooth=0.0)
+function embedGigaSOM(som::GigaSOM.Som, data::DataFrame;
+                      k=0, adjust=1.0, smooth=0.0)
 
     data::Array{Float64,2} = convertTrainingData(data)
     if size(data,2) != size(som.codes,2)
