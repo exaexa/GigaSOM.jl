@@ -30,6 +30,7 @@ Data must have the same number of dimensions as the training dataset
 and will be normalised with the same parameters.
 """
 function embedGigaSOM(som::GigaSOM.Som, data::DataFrame;
+                      knnTreeFun = BruteTree,
                       k=0, adjust=1.0, smooth=0.0)
 
     data::Array{Float64,2} = convertTrainingData(data)
@@ -49,8 +50,7 @@ function embedGigaSOM(som::GigaSOM.Som, data::DataFrame;
         k = Integer(som.xdim * som.ydim)
     end
 
-    #TODO: test other trees (KD or VP trees could work with dimensions <30)
-    t = BruteTree(Array{Float64,2}(transpose(som.codes)))
+    t = knnTreeFun(Array{Float64,2}(transpose(som.codes)))
 
     ndata = size(data, 1)
     dim = size(data, 2)
