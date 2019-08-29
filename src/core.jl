@@ -71,6 +71,7 @@ controlling the function and the return value is between 0.0 and 1.0.
 """
 function trainGigaSOM(som::Som, train::DataFrame;
                       kernelFun::Function = gaussianKernel,
+                      knnTreeFun = BruteTree,
                       r = 0.0, rFinal=0.1,
                       epochs = 10)
 
@@ -98,19 +99,17 @@ function trainGigaSOM(som::Som, train::DataFrame;
 
      println("Epoch: $j (radius: $rEpoch)")
 
-     #TODO explain: this was moved into the cycle because the update matrices should really get reset everytime. It looks like they were just growing additively before; is that right?
      globalSumNumerator = zeros(Float64, size(codes))
      globalSumDenominator = zeros(Float64, size(codes)[1])
 
-     # prepare the search structure for this epoch's input (TODO: use a real tree?)
-     nnTree = BruteTree(Array{Float64,2}(transpose(codes)))
+     nnTree = knnTreeFun(Array{Float64,2}(transpose(codes)))
 
      if nWorkers > 1
          # distribution across workers
          R = Array{Future}(undef,nWorkers, 1)
           @sync for p in workers()
               @async R[p] = @spawnat p begin
-                 doEpoch(localpart(dTrain), codes, nnTree) #dm, kernelFun, r, false)
+                 doEpoch(localpart(dTrain), codes, nnTree)
               end
           end
 
@@ -162,17 +161,6 @@ function doEpoch(x::Array{Float64, 2}, codes::Array{Float64, 2}, nnTree)
 
          sumNumerator[target, :] .+= x[s, :]
          sumDenominator[target] += 1
-
-         # for each node in codebook get distances to bmu and multiply it
-         #dist = kernelFun(dm[bmuIdx, :], r)
-
-         # doing col wise update of the numerator
-         #for i in 1:size(sumNumerator, 2)
-             #@inbounds @views begin
-                 #sumNumerator[:,i] .+= dist .* sample[i]
-             #end
-         #
-         #end
      end
 
      return sumNumerator, sumDenominator
