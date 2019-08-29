@@ -55,13 +55,30 @@ function embedGigaSOM(som::GigaSOM.Som, data::DataFrame;
     ndata = size(data, 1)
     dim = size(data, 2)
 
-    e = zeros(Float64, ndata, 2)
-    sp = zeros(Int, k)
+    nWorkers = nprocs()
+    if nWorkers > 1
+        dData = distribute(data)
 
+        dRes = [ (@spawnat w embedGigaSOM_internal(som, localpart(dData), t, k, adjust, boost)) for w in workers() ]
+
+        #hopefully the data are separated to localparts in correct order...
+        return vcat([fetch(r) for r in dRes]...)
+    else
+        return embedGigaSOM_internal(som, data, t, k, adjust, boost)
+    end
+end
+
+function embedGigaSOM_internal(som::GigaSOM.Som, data::Array{Float64,2}, t, k, adjust, boost)
+    ndata=size(data,1)
+    dim=size(data,2)
+
+    e=zeros(Float64, ndata, 2)
+    sp=zeros(Int, k)
+
+    # process all data points in this batch
     for di in 1:size(data,1)
-        #process all data points
-        #TODO: parallelize over this loop
 
+        # find the nearest neighbors and put them into correct order
         (knidx,kndist) = knn(t, data[di,:], k)
         sortperm!(sp, kndist)
         knidx=knidx[sp]
