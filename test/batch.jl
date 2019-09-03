@@ -9,21 +9,21 @@ Random.seed!(1)
 cc = map(Symbol, lineageMarkers)
 dfSom = daf.fcstable[:,cc]
 
-som2 = initGigaSOM(dfSom, 10, 10)
+som2 = initGigaSOM(dfSom, 20, 20)
 
 @testset "Dimensions - batch" begin
-    @test size(som2.codes) == (100,10)
-    @test som2.xdim == 10
-    @test som2.ydim == 10
-    @test som2.numCodes == 100
+    @test size(som2.codes) == (400,10)
+    @test som2.xdim == 20
+    @test som2.ydim == 20
+    @test som2.numCodes == 400
 end
 
 # using batch som with epochs
-som2 = trainGigaSOM(som2, dfSom, epochs = 1)
+som2 = trainGigaSOM(som2, dfSom, epochs = 10)
 
 winners = mapToGigaSOM(som2, dfSom)
 
-embed = embedGigaSOM(som2, dfSom, k=10, smooth=0.0, adjust=0.5)
+embed = embedGigaSOM(som2, dfSom)
 
 #test batch
 @testset "Batch" begin
