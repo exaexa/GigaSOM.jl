@@ -56,20 +56,21 @@ function embedGigaSOM(som::GigaSOM.Som, data::DataFrame;
         k = Integer(som.xdim * som.ydim)
     end
 
-    # prepare the kNN-tree for lookups
-    tree = knnTreeFun(Array{Float64,2}(transpose(som.codes)))
-
     # run the distributed computation
-    nWorkers = nprocs()
-    if nWorkers > 1
+    if nprocs() > 1
         dData = distribute(data)
 
-        dRes = [ (@spawnat pid embedGigaSOM_internal(som, localpart(dData), tree,
-                                                   k, adjust, boost))
-                 for (p,pid) in enumerate(workers()) ]
+        dRes = Array{Future}(undef, nworkers())
+        for (p,pid) in enumerate(workers())
+            dRes[p] = @spawnat pid begin
+                tree = knnTreeFun(Array{Float64,2}(transpose(som.codes)))
+                embedGigaSOM_internal(som, localpart(dData), tree, k, adjust, boost)
+            end
+        end
 
         return vcat([fetch(r) for r in dRes]...)
     else
+        tree = knnTreeFun(Array{Float64,2}(transpose(som.codes)))
         return embedGigaSOM_internal(som, data, tree, k, adjust, boost)
     end
 end

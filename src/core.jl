@@ -99,17 +99,19 @@ function trainGigaSOM(som::Som, train::DataFrame;
         if nWorkers > 1
             # distribution across workers
             R = Array{Future}(undef,nWorkers, 1)
-            @sync for (p, pid) in enumerate(workers())
-                @async R[p] = @spawnat pid begin
+            for (p, pid) in enumerate(workers())
+                R[p] = @spawnat pid begin
                     tree = knnTreeFun(Array{Float64,2}(transpose(codes)))
                     doEpoch(localpart(dTrain), codes, tree)
                 end
             end
 
-            @sync for (p, pid) in enumerate(workers())
-                tmp = fetch(R[p])
-                globalSumNumerator += tmp[1]
-                globalSumDenominator += tmp[2]
+            for (p, pid) in enumerate(workers())
+                println("fetch...")
+                @time tmp = fetch(R[p])
+                println("sum...")
+                @time globalSumNumerator += tmp[1]
+                @time globalSumDenominator += tmp[2]
             end
         else
             # simple batch mode
@@ -119,14 +121,17 @@ function trainGigaSOM(som::Som, train::DataFrame;
             globalSumDenominator += sumDenominator
         end
 
-        r = radiusFun(rStart, rFinal, j, epochs)
+        println("radiusFun")
+        @time r = radiusFun(rStart, rFinal, j, epochs)
         println("Radius: $r")
         if r <= 0
             error("Sanity check: radius must be positive")
         end
 
-        wEpoch = kernelFun(dm, r)
-        codes = (wEpoch*globalSumNumerator) ./ (wEpoch*globalSumDenominator)
+        println("kernelFun")
+        @time wEpoch = kernelFun(dm, r)
+        println("codeUpdate")
+        @time codes = (wEpoch*globalSumNumerator) ./ (wEpoch*globalSumDenominator)
     end
 
     som.codes[:,:] = codes[:,:]
