@@ -94,32 +94,53 @@ function trainGigaSOM(som::Som, train::DataFrame;
 
     codes = som.codes
 
-    nWorkers = nprocs()
-    dTrain = distribute(train)
+    isDistributed = nprocs() > 1
+
+    if isDistributed
+        ChIn=[RemoteChannel(i) for i in workers()]
+        ChOut=[RemoteChannel(i) for i in workers()]
+
+        Ps=[(@spawnat pid trainingWorker(ChOut[i], ChIn[i], epochs, knnTreeFun, metric))
+            for (i,pid) in enumerate(workers())]
+
+        nWorkers = nworkers()
+        ndata = size(train,1)
+        @sync for (i, ) in enumerate(workers())
+            @async begin
+                offset=i-1
+                b=1+offset*ndata÷nWorkers
+                e=(1+offset)*ndata÷nWorkers
+                println("sending data ", i)
+                put!(ChOut[i], train[b:e,:])
+                println("ok", i)
+            end
+        end
+    end
 
     for j in 1:epochs
 
         globalSumNumerator = zeros(Float64, size(codes))
         globalSumDenominator = zeros(Float64, size(codes)[1])
 
-        tree = knnTreeFun(Array{Float64,2}(transpose(codes)), metric)
+        if isDistributed
+            # send the current SOMs
+            @sync for (i, ) in enumerate(workers())
+                println("sending som ", i)
+                @async put!(ChOut[i], codes)
+                println("ok", i)
+            end
 
-        if nworkers() > 1
-
-            R = Vector{Any}(undef,nworkers())
-
-            @sync begin
-                for (idx, pid) in enumerate(workers())
-                    @async begin
-                        R[idx] =  fetch(@spawnat pid begin doEpoch(localpart(dTrain), codes, tree) end)
-                        globalSumNumerator += R[idx][1]
-                        globalSumDenominator += R[idx][2]
-                    end
-                end
+            for (i, ) in enumerate(workers())
+                println("recving som ", i)
+                workerSumNumerator, workerSumDenominator = take!(ChIn[i])
+                println("ok", i)
+                globalSumNumerator += workerSumNumerator
+                globalSumDenominator += workerSumDenominator
             end
         else
-            # only batch mode
-            sumNumerator, sumDenominator = doEpoch(localpart(dTrain), codes, tree)
+            # regular single-process batch mode
+            tree = knnTreeFun(Array{Float64,2}(transpose(codes)), metric)
+            sumNumerator, sumDenominator = doEpoch(train, codes, tree)
             globalSumNumerator += sumNumerator
             globalSumDenominator += sumDenominator
         end
@@ -134,11 +155,45 @@ function trainGigaSOM(som::Som, train::DataFrame;
         codes = (wEpoch*globalSumNumerator) ./ (wEpoch*globalSumDenominator)
     end
 
+    # wait until the worker functions terminate (TODO is this necessary?)
+    if isDistributed
+        for p in Ps
+            fetch(p)
+        end
+    end
+
     som.codes[:,:] = codes[:,:]
 
     return som
 end
 
+
+"""
+    trainingWorker(in, out, epochs, knnTreeFun, metric)
+
+Process-local function for training, communicates with the main thread using the channels.
+
+# Arguments:
+- `in`, `out`: RemoteChannels
+"""
+function trainingWorker(in, out, epochs, knnTreeFun, metric)
+    println("worker started")
+    data=take!(in)
+    println("worker data received", size(data))
+    println("worker epochs: ", epochs)
+    for e in 1:epochs
+        println("worker receiving codes")
+        codes = take!(in)
+        println("codes received", size(codes))
+        tree = knnTreeFun(Array{Float64,2}(transpose(codes)), metric)
+        sumNumerator, sumDenominator = doEpoch(data, codes, tree)
+        println("worker sending codes")
+        put!(out, (sumNumerator, sumDenominator))
+        println("codes sent")
+    end
+    println("worker terminating")
+    return true
+end
 
 """
     doEpoch(x::Array{Float64}, codes::Array{Float64}, tree)
@@ -226,7 +281,6 @@ function mapToGigaSOM(som::Som, data::DataFrame;
 
     return DataFrame(index = vis)
 end
-
 
 """
     scaleEpochTime(iteration::Int64, epochs::Int64)
