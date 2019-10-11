@@ -51,6 +51,12 @@ function initGigaSOM( train, xdim, ydim = xdim;
 end
 
 
+function sendto(p::Int; args...)
+    for (nm, val) in args
+        @spawnat(p, Core.eval(Main, Expr(:(=), nm, val)))
+    end
+end
+
 """
     trainGigaSOM(som::Som, train::DataFrame, kernelFun = gaussianKernel,
                         r = 0.0, epochs = 10)
@@ -94,8 +100,20 @@ function trainGigaSOM(som::Som, train::DataFrame;
 
     codes = som.codes
 
-    nWorkers = nprocs()
-    dTrain = distribute(train)
+    isDistributed = nprocs() > 1
+
+    if isDistributed
+        ndata=size(train,1)
+        nWorkers=nworkers()
+        @sync for (i,pid) in enumerate(workers())
+            @async begin
+                offset=i-1
+                b=1+offset*ndata÷nWorkers
+                e=(1+offset)*ndata÷nWorkers
+                sendto(pid, gigasom_data = train[b:e,:])
+            end
+        end
+    end
 
     for j in 1:epochs
 
@@ -104,22 +122,20 @@ function trainGigaSOM(som::Som, train::DataFrame;
 
         tree = knnTreeFun(Array{Float64,2}(transpose(codes)), metric)
 
-        if nworkers() > 1
+        if isDistributed
 
             R = Vector{Any}(undef,nworkers())
 
-            @sync begin
-                for (idx, pid) in enumerate(workers())
-                    @async begin
-                        R[idx] =  fetch(@spawnat pid begin doEpoch(localpart(dTrain), codes, tree) end)
-                        globalSumNumerator += R[idx][1]
-                        globalSumDenominator += R[idx][2]
-                    end
+            @sync for (idx, pid) in enumerate(workers())
+                @async begin
+                    R[idx] =  fetch(@spawnat pid begin doEpoch(Main.gigasom_data, codes, tree) end)
+                    globalSumNumerator += R[idx][1]
+                    globalSumDenominator += R[idx][2]
                 end
             end
         else
             # only batch mode
-            sumNumerator, sumDenominator = doEpoch(localpart(dTrain), codes, tree)
+            sumNumerator, sumDenominator = doEpoch(train, codes, tree)
             globalSumNumerator += sumNumerator
             globalSumDenominator += sumDenominator
         end
