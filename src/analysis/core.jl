@@ -139,8 +139,8 @@ function trainGigaSOM(
 
     eachEpoch(0, rStart, codes)
 
-    for j = 1:epochs
-        @debug "Epoch $j..."
+    for epoch = 1:epochs
+        @debug "Epoch $epoch..."
 
         numerator, denominator = distributedEpoch(
             dInfo,
@@ -148,7 +148,7 @@ function trainGigaSOM(
             knnTreeFun(Array{Float64,2}(transpose(codes)), metric),
         )
 
-        r = radiusFun(rStart, rFinal, j, epochs)
+        r = radiusFun(rStart, rFinal, epoch, epochs)
         @debug "radius: $r"
         if r <= 0
             @error "Sanity check failed: radius must be positive"
